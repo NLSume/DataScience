@@ -1,4 +1,6 @@
-setwd("D:/Nung Lian Sume/R Version 3.3.0/AAA Challenge")
+#setwd("D:/Nung Lian Sume/R Version 3.3.0/AAA Challenge")
+setwd("C:/Users/Nung Lian Sume/Desktop/AAA Challenge")
+
 library(ggplot2)
 library(ggthemes)
 library(GGally)
@@ -9,7 +11,10 @@ library(RColorBrewer)
 library(Amelia)
 library(vcd)
 
-#Getting Data
+library(caret)
+
+###############################################################################
+######---------------------- Getting Data  -----------------------#############
 rawtraining <- read.csv('SAStraining.csv',stringsAsFactors = FALSE)
 finaltest <- read.csv('SAStest.csv',stringsAsFactors = FALSE)
 
@@ -23,6 +28,11 @@ train <- rawtraining[,!variables %in% initialExcludes]
 #Convert Character to Factor
 train[sapply(train,is.character)] <- lapply(train[sapply(train,is.character)],as.factor)
 str(train)
+
+
+
+###############################################################################
+######---------------- Handling Missing Values -------------------#############
 
 #Check missing values
 missmap(train,main = "Missing value mapping",
@@ -38,6 +48,37 @@ round(sum(is.na(train$weight))/nrow(train),2)
 round(sum(is.na(train$payer_code))/nrow(train),2)
 round(sum(is.na(train$medical_specialty))/nrow(train),2)
 
+#Check if the missing values has relationshp with readmittance
+train$weightR[!is.na(train$weight)] <- 'No-Missing'
+train$weightR[is.na(train$weight)] <- 'Missing'
+
+train$payer_codeR[!is.na(train$payer_code)] <- 'No-Missing'
+train$payer_codeR[is.na(train$payer_code)] <- 'Missing'
+
+train$medical_specialtyR[!is.na(train$medical_specialty)] <- 'No-Missing'
+train$medical_specialtyR[is.na(train$medical_specialty)] <- 'Missing'
+
+#Weight
+weightTable <- table(train$readmitted,train$weightR)
+print(weightTable)
+round(prop.table(weightTable,margin = 2),2)
+xWeight <- chisq.test(train$weightR,train$readmitted)
+print(xWeight)
+
+#payer_code
+payerTable <- table(train$readmitted,train$payer_codeR)
+print(payerTable)
+round(prop.table(payerTable,margin = 2),2)
+xPayer <- chisq.test(train$payer_codeR,train$readmitted)
+print(xPayer)
+
+#medical_specialty
+specialtyTable <- table(train$readmitted,train$medical_specialtyR)
+print(specialtyTable)
+round(prop.table(specialtyTable,margin = 2),2)
+xSpecialty <- chisq.test(train$medical_specialtyR,train$readmitted)
+print(xSpecialty)
+
 
 #Exclude high missing value variales
 train <- train[,!names(train) %in% missingVars]
@@ -46,7 +87,9 @@ str(train)
 
 #Check Zerow/Low Variance variables
 nzv <- nearZeroVar(train,saveMetrics = TRUE)
+print(nzv)
 zerovariance <- rownames(nzv[nzv$zeroVar == TRUE,])
+print(zerovariance)
 
 #Exclude zerovariance
 train <- train[,!names(train) %in% zerovariance]
