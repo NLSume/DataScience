@@ -1,5 +1,5 @@
-#setwd("D:/Nung Lian Sume/R Version 3.3.0/AAA Challenge")
-setwd("C:/Users/Nung Lian Sume/Desktop/AAA Challenge")
+setwd("D:/Nung Lian Sume/R Version 3.3.0/AAA Challenge")
+#setwd("C:/Users/Nung Lian Sume/Desktop/AAA Challenge")
 
 library(ggplot2)
 library(ggthemes)
@@ -21,14 +21,9 @@ finaltest <- read.csv('SAStest.csv',stringsAsFactors = FALSE)
 #Initial Data Preparation
 rawtraining$readmitted <- as.factor(rawtraining$readmitted)
 variables <- names(rawtraining)
-initialExcludes <- c("patientID","admissionDate","diag_1_desc","diag_2_desc","diag_3_desc","discharge_disposition_id","admission_source_id")
+initialExcludes <- c("patientID","admissionDate")
 
 train <- rawtraining[,!variables %in% initialExcludes]
-
-#Convert Character to Factor
-train[sapply(train,is.character)] <- lapply(train[sapply(train,is.character)],as.factor)
-str(train)
-
 
 
 ###############################################################################
@@ -80,12 +75,99 @@ xSpecialty <- chisq.test(train$medical_specialtyR,train$readmitted)
 print(xSpecialty)
 
 
+train$weightR <- as.factor(train$weightR)
+train$payer_codeR <- as.factor(train$payer_codeR)
+train$medical_specialtyR <- as.factor(train$medical_specialtyR)
+
 #Exclude high missing value variales
 train <- train[,!names(train) %in% missingVars]
 str(train)
 
+#Check and replace blank cases
+train$race <- ifelse(train$race == "?","NotKeyed",train$race)
+train$admission_type_id <- ifelse(train$admission_type_id == "","NotKeyed",train$admission_type_id)
+train$admission_source_id <- ifelse(train$admission_source_id == "","NotKeyed",train$admission_source_id)
+train$discharge_disposition_id <- ifelse(train$discharge_disposition_id == "","NotKeyed",train$discharge_disposition_id)
 
-#Check Zerow/Low Variance variables
+
+################################################################################
+#------ Cleaning Diag_1, Diag_2 and Diag_3 ------------------------------------#
+
+diagnosis <- rawtraining[c('diag_1','diag_2','diag_3','readmitted')]
+
+#Creating Dictionary for Coding
+dia1 <- rawtraining[,c("diag_1","diag_1_desc")]
+names(dia1) <- c('diag','description')
+dia2 <- rawtraining[,c("diag_2","diag_2_desc")]
+names(dia2) <- c('diag','description')
+dia3 <- rawtraining[,c("diag_3","diag_3_desc")]
+names(dia3) <- c('diag','description')
+
+allDiag <- rbind(dia1,dia2,dia3)
+allDiagUnique <- unique(allDiag)
+allDiagUnique <- allDiagUnique[order(allDiagUnique$diag),]
+print(head(allDiagUnique,10))
+
+#Check cases with 250 Codes
+diag250 <- allDiagUnique[grepl('250',allDiagUnique$diag),]
+diagnosis250 <- diagnosis[diagnosis$diag_1 %in% diag250$diag,]
+table(diagnosis250$diag_1,diagnosis250$readmitted)
+round(prop.table(table(diagnosis250$diag_1,diagnosis250$readmitted),margin=1),2)
+
+##############################################################################
+#---------Shifting/Reorganizing the diag_1,diag_2 and diag_3-----------------#
+
+#If the diag_1 is missing, replace with diag_2
+diagnosis$diag_1 <- ifelse(diagnosis$diag_1 == '?',diagnosis$diag_2,diagnosis$diag_1)
+#If the diag_2 is missing, replace with diag_3
+diagnosis$diag_2 <- ifelse(diagnosis$diag_2 == '?',diagnosis$diag_3,diagnosis$diag_2)
+#If diag_1 and diag_2 is the same, repalce diag_2 with diag 3
+diagnosis$diag_2 <- ifelse(diagnosis$diag_1 == diagnosis$diag_2,diagnosis$diag_3,diagnosis$diag_2)
+#If diag_2 and diag_3 is the same, repalce diag_3 with '?', if not with diag_3
+diagnosis$diag_3 <- ifelse(diagnosis$diag_2 == diagnosis$diag_3,'?',diagnosis$diag_3)
+
+
+diagnosisMissing <- diagnosis[diagnosis$diag_1 == '?' |
+                                diagnosis$diag_2 == '?' |
+                                diagnosis$diag_3 == '?',]
+head(diagnosisMissing,15)
+
+
+
+
+#Replace Missing Values
+
+fix_missing <- function(x,na.value){
+  x[x==na.value] <- NA
+  x
+}
+diagnosis[1:3] <- lapply(diagnosis[1:3],fix_missing,'?')
+
+#Merge diagnosis into the train dataset
+train[,c('diag_1','diag_2','diag_3')] <- NULL
+diagnosis[,'readmitted'] <- NULL
+train <- cbind(train,diagnosis)
+
+################################################################################
+#------------------- Derive New Variables  -----------------------------------#
+
+#No of Important Diagnosis
+train$No_Diags <- apply(train[,1:3],1,function(x) sum(!is.na(x)))
+round(prop.table(table(train$No_Diags,train$readmitted),margin=1),2)
+
+
+#Hospice
+hospicecode <- c("Hospice / home","Hospice / medical facility")
+Hospice <- train[train$discharge_disposition_id %in% hospicecode,c('discharge_disposition_id','readmitted','No_Diags')]
+#Check if patients who were sent to Hospice were not readmitted (possibily died)
+round(prop.table(table(Hospice$discharge_disposition_id,Hospice$readmitted),margin = 1),2)
+round(prop.table(table(Hospice$discharge_disposition_id,Hospice$No_Diags),margin = 1),2)
+
+train$hospice <- ifelse(train$discharge_disposition_id %in% c("Hospice / home","Hospice / medical facility"), 1,0)
+
+################################################################################
+#------ #Check Zerow/Low Variance variables -----------------------------------#
+
 nzv <- nearZeroVar(train,saveMetrics = TRUE)
 print(nzv)
 zerovariance <- rownames(nzv[nzv$zeroVar == TRUE,])
@@ -96,6 +178,18 @@ train <- train[,!names(train) %in% zerovariance]
 str(train)
 names(train)
 
+
+################################################################################
+#----------------------- Prepare trian data -----------------------------------#
+
+#To exclude
+diaDescription <- c('diag_1_desc','diag_2_desc','diag_3_desc')
+train <- train[,!(names(train) %in% diaDescription)]
+
+
+#Convert Character to Factor
+train[sapply(train,is.character)] <- lapply(train[sapply(train,is.character)],as.factor)
+str(train)
 
 ####################################################################
 #--------------- Visualization ------------------------------------#
